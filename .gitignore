@@ -1,0 +1,4 @@
+# nothing sensitive here (lab), but keep volumes/local cruft out
+*.log
+.DS_Store
+db/data/

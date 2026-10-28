@@ -1,0 +1,50 @@
+# =============================================================================
+#  Senarath Bank HR Management Portal  —  DELIBERATELY VULNERABLE LAB TARGET
+# =============================================================================
+#  This stack is intentionally insecure and is meant ONLY for an isolated,
+#  internal red-team / training lab. Do NOT expose it to the internet or any
+#  untrusted network. See README.md.
+# =============================================================================
+
+services:
+  db:
+    image: mariadb:10.6
+    container_name: senarath_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root            # weak on purpose (lab)
+      MYSQL_DATABASE: senarath_hr
+      MYSQL_USER: webapp
+      MYSQL_PASSWORD: webapp123            # weak on purpose (lab)
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - senarath_dbdata:/var/lib/mysql
+    ports:
+      - "3306:3306"                        # exposed on purpose (lab)
+    networks:
+      - hrnet
+
+  web:
+    build: ./web
+    container_name: senarath_web
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_USER: webapp
+      DB_PASS: webapp123
+      DB_NAME: senarath_hr
+    volumes:
+      - ./web/src:/var/www/html            # live-mount so you can tweak code
+    ports:
+      - "8080:80"
+    networks:
+      - hrnet
+
+volumes:
+  senarath_dbdata:
+
+networks:
+  hrnet:
+    driver: bridge
