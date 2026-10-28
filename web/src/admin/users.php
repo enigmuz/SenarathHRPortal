@@ -1,21 +1,43 @@
 <?php
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../logger.php';
 require_once __DIR__ . '/admin_partials.php';
 require_login();   // no role check — broken access control (LAB)
 
 $msg = '';
+$unauthorized = (($_SESSION['role'] ?? '') !== 'admin');
 
 // Delete (injectable id, no CSRF, no role check) — LAB
 if (isset($_GET['delete'])) {
     $did = $_GET['delete'];
-    mysqli_query($conn, "DELETE FROM users WHERE id = $did");
+    $ok  = mysqli_query($conn, "DELETE FROM users WHERE id = $did");
     $msg = "Deleted staff id $did.";
+    sec_log([
+        'event_category'          => 'admin',
+        'event_action'            => 'account_delete',
+        'component'               => 'admin/users',
+        'severity'                => 'high',
+        'outcome'                 => $ok ? 'success' : 'error',
+        'target_user_id'          => (string)$did,
+        'broken_access_suspected' => $unauthorized,
+        'sqli_suspected'          => looks_like_sqli((string)$did),
+        'message'                 => $ok ? null : mysqli_error($conn),
+    ]);
 }
 
 /* Full dump including PLAINTEXT passwords — exactly what an attacker would
  * want to exfiltrate. Present on purpose for the lab. */
 $rows = mysqli_query($conn, "SELECT * FROM users ORDER BY id");
+sec_log([
+    'event_category'          => 'admin',
+    'event_action'            => 'staff_dump',      // viewing all accounts incl. plaintext creds
+    'component'               => 'admin/users',
+    'severity'                => 'high',
+    'outcome'                 => 'success',
+    'record_count'            => $rows ? mysqli_num_rows($rows) : 0,
+    'broken_access_suspected' => $unauthorized,
+]);
 
 render_admin_header('users');
 ?>

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../logger.php';
 require_once __DIR__ . '/admin_partials.php';
 require_login();   // no role check — broken access control (LAB)
 
@@ -24,16 +25,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $phone = $_POST['phone'];
     $pid   = $_POST['id'];
 
+    // capture prior role to detect privilege escalation
+    $prev = mysqli_fetch_assoc(mysqli_query($conn, "SELECT role FROM users WHERE id = $pid"));
+    $old_role = $prev['role'] ?? null;
+
     $sql = "UPDATE users SET
               full_name='$full', username='$uname', password='$pw',
               department='$dept', position='$pos', role='$role',
               email='$email', phone='$phone'
             WHERE id=$pid";
-    if (mysqli_query($conn, $sql)) {
+    $ok = mysqli_query($conn, $sql);
+    if ($ok) {
         $msg = 'Account updated.';
     } else {
         $msg = 'SQL error: ' . mysqli_error($conn);
     }
+
+    $privesc = ($old_role !== null && $role !== $old_role && $role === 'admin');
+    $unauthorized = (($_SESSION['role'] ?? '') !== 'admin');
+    sec_log([
+        'event_category'          => $ok ? 'admin' : 'error',
+        'event_action'            => $privesc ? 'privilege_change' : 'account_update',
+        'component'               => 'admin/edit_user',
+        'severity'                => ($privesc || !$ok || $unauthorized) ? 'high' : 'warning',
+        'outcome'                 => $ok ? 'success' : 'error',
+        'target_user_id'          => (string)$pid,
+        'old_role'                => $old_role,
+        'new_role'                => $role,
+        'privesc_suspected'       => $privesc,     // account raised to admin
+        'broken_access_suspected' => $unauthorized,
+        'sqli_suspected'          => looks_like_sqli((string)$role) || looks_like_sqli((string)$pid),
+        'message'                 => $ok ? null : mysqli_error($conn),
+    ]);
     $id = $pid;
 }
 

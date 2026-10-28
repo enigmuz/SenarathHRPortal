@@ -1,0 +1,54 @@
+# =============================================================================
+#  Falcon LogScale Collector  —  config for the Senarath Bank HR lab
+# =============================================================================
+#  Ships the portal's NDJSON security log + Apache access log to CrowdStrike
+#  (Falcon LogScale / Next-Gen SIEM).
+#
+#  Install the collector on the Ubuntu lab laptop (same host running Docker):
+#    Falcon console -> Next-Gen SIEM / LogScale -> Log collectors -> download
+#    the Linux package, then drop this file in as its config.
+#    (Default config path is typically /etc/logscale-collector/config.yaml —
+#     confirm for your collector version.)
+#
+#  Fill in the two placeholders from your tenant:
+#    <LOGSCALE_ENDPOINT>  e.g. https://cloud.community.humio.com
+#                              or your NG-SIEM / LogScale ingest URL
+#    <INGEST_TOKEN>       an ingest token for the target repository/view.
+#
+#  IMPORTANT: assign a parser to that ingest token so fields are extracted.
+#    - For app.log  : the built-in "json" parser (events are already NDJSON).
+#    - For apache    : a built-in accesslog/combined parser, or leave raw.
+#    Set the event time to the "timestamp" field (UTC ISO-8601) for app.log.
+# =============================================================================
+
+dataDirectory: /var/lib/logscale-collector
+
+sources:
+  # --- Application security events (structured NDJSON) --------------------
+  senarath_app:
+    type: file
+    include:
+      - /opt/senarath/logs/app.log        # <- host path of ./logs/app.log
+    sink: logscale
+    # Tag so you can route/parse by source inside LogScale
+    fields:
+      source: senarath-hr-app
+      observer.type: webapp
+
+  # --- Raw Apache access log (captures GET-based SQLi payloads in URLs) ----
+  senarath_apache:
+    type: file
+    include:
+      - /opt/senarath/logs/apache_access.log
+    sink: logscale
+    fields:
+      source: senarath-hr-apache
+      observer.type: webserver
+
+sinks:
+  logscale:
+    type: logscale
+    # older collector builds call this sink type "humio" — use that if yours
+    # rejects "logscale".
+    endpoint: <LOGSCALE_ENDPOINT>
+    ingestToken: <INGEST_TOKEN>

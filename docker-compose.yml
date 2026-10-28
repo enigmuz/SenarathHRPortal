@@ -37,10 +37,16 @@ services:
       DB_NAME: senarath_hr
     volumes:
       - ./web/src:/var/www/html            # live-mount so you can tweak code
+      - ./logs:/var/log/senarath           # app + apache logs -> host (for the collector)
     ports:
       - "8080:80"
     networks:
       - hrnet
+    logging:                               # bound docker json-file logs (stderr mirror)
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   senarath_dbdata:

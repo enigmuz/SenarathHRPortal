@@ -2,6 +2,7 @@
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/partials.php';
+require_once __DIR__ . '/logger.php';
 require_login();
 
 /* ---------------------------------------------------------------------------
@@ -18,6 +19,20 @@ $id = $_GET['id'] ?? $_SESSION['user_id'];
 
 $sql = "SELECT * FROM users WHERE id = $id LIMIT 1";
 $res = mysqli_query($conn, $sql);
+
+$idor = isset($_GET['id']) && (string)$_GET['id'] !== (string)($_SESSION['user_id'] ?? '');
+$susp = looks_like_sqli((string)$id);
+sec_log([
+    'event_category' => $res === false ? 'error' : 'data_access',
+    'event_action'   => $res === false ? 'sql_error' : 'view_profile',
+    'component'      => 'profile',
+    'severity'       => ($res === false || $susp || $idor) ? 'high' : 'info',
+    'outcome'        => $res === false ? 'error' : 'success',
+    'target_user_id' => (string)$id,
+    'idor_suspected' => $idor,     // viewing a record other than your own
+    'sqli_suspected' => $susp,
+    'message'        => $res === false ? mysqli_error($conn) : null,
+]);
 
 render_header('profile');
 

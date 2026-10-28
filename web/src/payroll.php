@@ -2,6 +2,7 @@
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/partials.php';
+require_once __DIR__ . '/logger.php';
 require_login();
 
 /* INTENTIONALLY VULNERABLE (LAB): IDOR — any user can read anyone's payroll
@@ -11,6 +12,19 @@ $uid = $_GET['user_id'] ?? $_SESSION['user_id'];
 
 $owner = mysqli_fetch_assoc(mysqli_query($conn, "SELECT full_name, department FROM users WHERE id = $uid"));
 $rows  = mysqli_query($conn, "SELECT * FROM payroll WHERE user_id = $uid ORDER BY pay_month DESC");
+
+$idor = isset($_GET['user_id']) && (string)$_GET['user_id'] !== (string)($_SESSION['user_id'] ?? '');
+sec_log([
+    'event_category' => $rows === false ? 'error' : 'data_access',
+    'event_action'   => $rows === false ? 'sql_error' : 'view_payroll',
+    'component'      => 'payroll',
+    'severity'       => ($rows === false || $idor || looks_like_sqli((string)$uid)) ? 'high' : 'info',
+    'outcome'        => $rows === false ? 'error' : 'success',
+    'target_user_id' => (string)$uid,
+    'idor_suspected' => $idor,
+    'sqli_suspected' => looks_like_sqli((string)$uid),
+    'message'        => $rows === false ? mysqli_error($conn) : null,
+]);
 
 render_header('payroll');
 

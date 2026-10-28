@@ -2,6 +2,7 @@
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/partials.php';
+require_once __DIR__ . '/logger.php';
 require_login();
 
 $q = $_GET['q'] ?? '';
@@ -24,6 +25,18 @@ if (isset($_GET['q'])) {
             ORDER BY full_name";
     $rows = mysqli_query($conn, $sql);
     log_activity($conn, (int)$_SESSION['user_id'], 'Viewed staff directory');
+    $susp = looks_like_sqli($q);
+    sec_log([
+        'event_category' => $rows === false ? 'error' : 'data_access',
+        'event_action'   => $rows === false ? 'sql_error' : 'staff_search',
+        'component'      => 'directory',
+        'severity'       => ($susp || $rows === false) ? 'high' : 'info',
+        'outcome'        => $rows === false ? 'error' : 'success',
+        'query'          => $q,                                   // captures the SQLi payload
+        'result_count'   => ($rows && $rows !== false) ? mysqli_num_rows($rows) : 0,
+        'sqli_suspected' => $susp,
+        'message'        => $rows === false ? mysqli_error($conn) : null,
+    ]);
 }
 
 render_header('directory');

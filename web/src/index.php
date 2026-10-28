@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/logger.php';
 
 $error = '';
 
@@ -22,10 +23,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             LIMIT 1";
 
     $res = mysqli_query($conn, $sql);
+    $susp = looks_like_sqli($username) || looks_like_sqli($password);
 
     if ($res === false) {
         // Verbose SQL errors on purpose (enables error-based SQLi).
         $error = 'SQL error: ' . mysqli_error($conn);
+        sec_log([
+            'event_category' => 'error',
+            'event_action'   => 'sql_error',
+            'component'      => 'login',
+            'severity'       => 'high',
+            'outcome'        => 'error',
+            'attempt_user'   => $username,
+            'sqli_suspected' => $susp,
+            'message'        => mysqli_error($conn),
+        ]);
     } elseif (mysqli_num_rows($res) > 0) {
         $row = mysqli_fetch_assoc($res);
         $_SESSION['user_id']   = $row['id'];
@@ -33,10 +45,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $_SESSION['full_name'] = $row['full_name'];
         $_SESSION['role']      = $row['role'];
         log_activity($conn, (int)$row['id'], 'Logged in');
+        sec_log([
+            'event_category'       => 'authentication',
+            'event_action'         => 'login_success',
+            'severity'             => $susp ? 'high' : 'info',
+            'outcome'              => 'success',
+            'actor'                => $row['username'],
+            'actor_uid'            => (int)$row['id'],
+            'actor_role'           => $row['role'],
+            'attempt_user'         => $username,
+            'auth_bypass_suspected'=> $susp,   // success + injection chars => likely SQLi bypass
+        ]);
         header('Location: dashboard.php');
         exit;
     } else {
         $error = 'Invalid username or password.';
+        sec_log([
+            'event_category' => 'authentication',
+            'event_action'   => 'login_failure',
+            'severity'       => $susp ? 'high' : 'warning',
+            'outcome'        => 'failure',
+            'attempt_user'   => $username,
+            'sqli_suspected' => $susp,
+        ]);
     }
 }
 ?>

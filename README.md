@@ -28,10 +28,17 @@ employees**. Every person, NIC, salary and bank account in it is fake.
 HR Management Portal/
 ├── docker-compose.yml
 ├── README.md
+├── logs/                       # app + apache logs land here (for the SIEM collector)
+├── collector/                  # CrowdStrike collector configs (see Section 8)
+│   ├── falcon-logscale-collector.yaml
+│   ├── fluent-bit.conf
+│   └── parsers.conf
 ├── web/
 │   ├── Dockerfile
+│   ├── apache-senarath.conf    # mirrors apache logs into ./logs
 │   └── src/            # all PHP (live-mounted into the web container)
 │       ├── index.php          # login (SQLi-vulnerable auth)
+│       ├── logger.php         # structured NDJSON security logging
 │       ├── dashboard.php
 │       ├── directory.php      # staff search (UNION SQLi)
 │       ├── profile.php        # employee record (IDOR + SQLi)
@@ -100,6 +107,9 @@ cd senarath-portal
 From the project folder on the Ubuntu laptop:
 
 ```bash
+# create the shared log dir so the container (www-data) can write to it
+mkdir -p logs && chmod 777 logs
+
 docker compose up -d --build
 ```
 
@@ -228,6 +238,122 @@ concatenation, so it is SQL-injectable too.
    table, then escalate a low-priv account to `admin` via `edit_user.php`.
 6. Blue team: capture the activity logs, DB query logs, and web logs; write
    detections for the payloads above.
+
+---
+
+---
+
+## 8. Log monitoring → CrowdStrike (NG-SIEM / Falcon LogScale)
+
+The portal is instrumented so a collector can forward its activity to
+CrowdStrike for the blue team to monitor during the exercise. **Logging only
+records events — it never blocks or sanitises anything, so the app stays fully
+vulnerable.**
+
+### 8.1 What gets written, and where
+
+All logs land in the host-mounted `./logs/` directory:
+
+| File | Format | Contents |
+|------|--------|----------|
+| `logs/app.log` | **NDJSON** (one JSON object per line) | Structured security events (auth, data access, admin, SQL errors) |
+| `logs/apache_access.log` | Apache combined + `%D` | Every HTTP request — GET-based SQLi payloads appear in the query string |
+| `logs/apache_error.log` | Apache error log | PHP warnings / server errors |
+
+Each app event is **also** mirrored to the container's stderr, so it's
+available a second way via the Docker json-file driver:
+```bash
+docker logs -f senarath_web
+```
+
+NDJSON is what LogScale / NG-SIEM parse natively — point a `json` parser at
+`app.log` and every field below becomes queryable.
+
+### 8.2 Event schema (`app.log`)
+
+Common fields on every event:
+
+| Field | Example | Notes |
+|-------|---------|-------|
+| `timestamp` | `2026-10-28T14:02:11Z` | UTC ISO-8601 — map this as the event time |
+| `app` / `env` / `host` | `senarath-hr` / `lab` / `senarath_web` | source identity |
+| `src_ip`, `x_forwarded_for` | `10.10.0.5` | attacker IP |
+| `user_agent`, `http_method`, `http_path` | | request context |
+| `session_user`, `session_uid`, `session_role` | `admin` / `1` / `admin` | who is logged in |
+| `event_category` | `authentication` \| `data_access` \| `admin` \| `error` | |
+| `event_action` | see below | the specific action |
+| `severity` | `info` \| `warning` \| `high` | |
+| `outcome` | `success` \| `failure` \| `error` | |
+
+Detection flags (boolean — these are your high-signal hunting pivots):
+
+| Flag | Fires when |
+|------|-----------|
+| `sqli_suspected` | input contains SQLi markers (`'`, `UNION`, `--`, `OR 1=1`, `information_schema`, …) |
+| `auth_bypass_suspected` | login **succeeded** *and* the input looked like SQLi → likely auth bypass |
+| `idor_suspected` | a user read a `profile` / `payroll` / `activity` record that isn't their own |
+| `broken_access_suspected` | a **non-admin** session reached the admin console |
+| `privesc_suspected` | an account's role was raised to `admin` |
+
+`event_action` values: `login_success`, `login_failure`, `sql_error`,
+`staff_search`, `view_profile`, `view_payroll`, `view_activity`,
+`admin_access`, `staff_dump`, `account_update`, `privilege_change`,
+`account_delete`.
+
+Example line (SQLi auth bypass):
+```json
+{"timestamp":"2026-10-28T14:02:11Z","app":"senarath-hr","env":"lab","host":"senarath_web","src_ip":"10.10.0.5","http_method":"POST","http_path":"/index.php","event_category":"authentication","event_action":"login_success","severity":"high","outcome":"success","actor":"admin","actor_uid":1,"actor_role":"admin","attempt_user":"admin' -- ","auth_bypass_suspected":true}
+```
+
+### 8.3 Point the collector at the logs
+
+Configs are in `collector/`. Both assume the host `./logs` directory is
+reachable — copy or symlink it to a stable path (the configs use
+`/opt/senarath/logs`), e.g.:
+```bash
+sudo mkdir -p /opt/senarath
+sudo ln -s "$(pwd)/logs" /opt/senarath/logs
+sudo ln -s "$(pwd)/collector" /opt/senarath/collector
+```
+
+**Option 1 — Falcon LogScale Collector (CrowdStrike-native).**
+Download the Linux collector from your Falcon console
+(*Next-Gen SIEM / LogScale → Log collectors*), then use
+`collector/falcon-logscale-collector.yaml`. Fill in `<LOGSCALE_ENDPOINT>` and
+`<INGEST_TOKEN>` from your tenant, and assign the built-in **`json`** parser to
+the ingest token so `app.log` fields are extracted.
+
+**Option 2 — Fluent Bit.**
+```bash
+sudo apt-get install -y fluent-bit
+fluent-bit -c /opt/senarath/collector/fluent-bit.conf
+```
+Fill in `<LOGSCALE_HOST>` and `<INGEST_TOKEN>`; it ships to LogScale's
+HEC-compatible ingest endpoint.
+
+> The exact sink type, endpoint path and token location vary by CrowdStrike
+> tenant and collector version — confirm them against your Falcon console.
+> The log **format** (NDJSON with the fields above) is the part that matters
+> and is collector-agnostic.
+
+### 8.4 Example detections (LogScale / NG-SIEM query syntax)
+
+```
+// SQL-injection auth bypass
+event_action=login_success auth_bypass_suspected=true
+
+// Any SQLi attempt across the app
+sqli_suspected=true | groupBy([src_ip, event_action])
+
+// IDOR — users pulling records that aren't theirs
+idor_suspected=true | groupBy([session_user, target_user_id])
+
+// Privilege escalation to admin
+event_action=privilege_change privesc_suspected=true
+
+// Broken access control — non-admin in the admin console
+broken_access_suspected=true
+```
 
 ---
 

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../logger.php';
 require_once __DIR__ . '/admin_partials.php';
 
 /* ---------------------------------------------------------------------------
@@ -13,6 +14,16 @@ require_once __DIR__ . '/admin_partials.php';
  *  // if (($_SESSION['role'] ?? '') !== 'admin') { http_response_code(403); exit('Forbidden'); }
  * ------------------------------------------------------------------------- */
 require_login();
+
+$unauthorized = (($_SESSION['role'] ?? '') !== 'admin');
+sec_log([
+    'event_category'          => 'admin',
+    'event_action'            => 'admin_access',
+    'component'               => 'admin/index',
+    'severity'                => $unauthorized ? 'high' : 'info',
+    'outcome'                 => 'success',
+    'broken_access_suspected' => $unauthorized,  // reached admin without admin role
+]);
 
 $total   = mysqli_fetch_assoc(mysqli_query($conn,"SELECT COUNT(*) c FROM users"))['c'];
 $admins  = mysqli_fetch_assoc(mysqli_query($conn,"SELECT COUNT(*) c FROM users WHERE role='admin'"))['c'];

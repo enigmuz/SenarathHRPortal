@@ -2,6 +2,7 @@
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/partials.php';
+require_once __DIR__ . '/logger.php';
 require_login();
 
 /* INTENTIONALLY VULNERABLE (LAB): IDOR + injectable user_id */
@@ -10,6 +11,19 @@ $uid = $_GET['user_id'] ?? $_SESSION['user_id'];
 $owner = mysqli_fetch_assoc(mysqli_query($conn, "SELECT full_name FROM users WHERE id = $uid"));
 $acts  = mysqli_query($conn, "SELECT * FROM activities WHERE user_id = $uid ORDER BY created_at DESC");
 $leaves= mysqli_query($conn, "SELECT * FROM leave_requests WHERE user_id = $uid ORDER BY from_date DESC");
+
+$idor = isset($_GET['user_id']) && (string)$_GET['user_id'] !== (string)($_SESSION['user_id'] ?? '');
+sec_log([
+    'event_category' => $acts === false ? 'error' : 'data_access',
+    'event_action'   => $acts === false ? 'sql_error' : 'view_activity',
+    'component'      => 'activities',
+    'severity'       => ($acts === false || $idor || looks_like_sqli((string)$uid)) ? 'high' : 'info',
+    'outcome'        => $acts === false ? 'error' : 'success',
+    'target_user_id' => (string)$uid,
+    'idor_suspected' => $idor,
+    'sqli_suspected' => looks_like_sqli((string)$uid),
+    'message'        => $acts === false ? mysqli_error($conn) : null,
+]);
 
 render_header('activities');
 

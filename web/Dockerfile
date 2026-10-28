@@ -12,6 +12,13 @@ RUN { \
 
 RUN a2enmod rewrite
 
+# Shared log directory for the SIEM / CrowdStrike collector to tail.
+# World-writable so mod_php (www-data) can write even over a host bind-mount (lab).
+RUN mkdir -p /var/log/senarath && chmod 0777 /var/log/senarath
+
+# Also send Apache access/error logs into that shared directory.
+COPY apache-senarath.conf /etc/apache2/conf-enabled/senarath-logging.conf
+
 # Baked-in copy (volume mount in docker-compose overrides this for live edits)
 COPY src/ /var/www/html/
 
