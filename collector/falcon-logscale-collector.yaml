@@ -28,7 +28,7 @@ sources:
   senarath_app:
     type: file
     include:
-      - /opt/senarath/logs/app.log        # <- host path of ./logs/app.log
+      - /var/log/senarath/app.log
     sink: logscale
     # Tag so you can route/parse by source inside LogScale
     fields:
@@ -39,7 +39,7 @@ sources:
   senarath_apache:
     type: file
     include:
-      - /opt/senarath/logs/apache_access.log
+      - /var/log/senarath/apache_access.log
     sink: logscale
     fields:
       source: senarath-hr-apache

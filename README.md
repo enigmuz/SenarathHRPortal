@@ -28,14 +28,13 @@ employees**. Every person, NIC, salary and bank account in it is fake.
 HR Management Portal/
 ├── docker-compose.yml
 ├── README.md
-├── logs/                       # app + apache logs land here (for the SIEM collector)
 ├── collector/                  # CrowdStrike collector configs (see Section 8)
 │   ├── falcon-logscale-collector.yaml
 │   ├── fluent-bit.conf
 │   └── parsers.conf
 ├── web/
 │   ├── Dockerfile
-│   ├── apache-senarath.conf    # mirrors apache logs into ./logs
+│   ├── apache-senarath.conf    # mirrors apache logs into /var/log/senarath
 │   └── src/            # all PHP (live-mounted into the web container)
 │       ├── index.php          # login (SQLi-vulnerable auth)
 │       ├── logger.php         # structured NDJSON security logging
@@ -107,8 +106,8 @@ cd senarath-portal
 From the project folder on the Ubuntu laptop:
 
 ```bash
-# create the shared log dir so the container (www-data) can write to it
-mkdir -p logs && chmod 777 logs
+# create the host log dir under /var/log so the container (www-data) can write to it
+sudo mkdir -p /var/log/senarath && sudo chmod 777 /var/log/senarath
 
 docker compose up -d --build
 ```
@@ -252,13 +251,14 @@ vulnerable.**
 
 ### 8.1 What gets written, and where
 
-All logs land in the host-mounted `./logs/` directory:
+All logs land in `/var/log/senarath/` on the Ubuntu host (under the standard
+system log directory, the same convention as `/var/log/apache2`):
 
 | File | Format | Contents |
 |------|--------|----------|
-| `logs/app.log` | **NDJSON** (one JSON object per line) | Structured security events (auth, data access, admin, SQL errors) |
-| `logs/apache_access.log` | Apache combined + `%D` | Every HTTP request — GET-based SQLi payloads appear in the query string |
-| `logs/apache_error.log` | Apache error log | PHP warnings / server errors |
+| `/var/log/senarath/app.log` | **NDJSON** (one JSON object per line) | Structured security events (auth, data access, admin, SQL errors) |
+| `/var/log/senarath/apache_access.log` | Apache combined + `%D` | Every HTTP request — GET-based SQLi payloads appear in the query string |
+| `/var/log/senarath/apache_error.log` | Apache error log | PHP warnings / server errors |
 
 Each app event is **also** mirrored to the container's stderr, so it's
 available a second way via the Docker json-file driver:
@@ -307,14 +307,8 @@ Example line (SQLi auth bypass):
 
 ### 8.3 Point the collector at the logs
 
-Configs are in `collector/`. Both assume the host `./logs` directory is
-reachable — copy or symlink it to a stable path (the configs use
-`/opt/senarath/logs`), e.g.:
-```bash
-sudo mkdir -p /opt/senarath
-sudo ln -s "$(pwd)/logs" /opt/senarath/logs
-sudo ln -s "$(pwd)/collector" /opt/senarath/collector
-```
+Configs are in `collector/` and read the logs straight from
+`/var/log/senarath/` on the host (no symlink needed).
 
 **Option 1 — Falcon LogScale Collector (CrowdStrike-native).**
 Download the Linux collector from your Falcon console

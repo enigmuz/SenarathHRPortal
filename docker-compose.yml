@@ -37,7 +37,7 @@ services:
       DB_NAME: senarath_hr
     volumes:
       - ./web/src:/var/www/html            # live-mount so you can tweak code
-      - ./logs:/var/log/senarath           # app + apache logs -> host (for the collector)
+      - /var/log/senarath:/var/log/senarath  # app + apache logs -> host /var/log/senarath
     ports:
       - "8080:80"
     networks:
