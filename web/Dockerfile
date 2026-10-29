@@ -16,8 +16,10 @@ RUN a2enmod rewrite
 # World-writable so mod_php (www-data) can write even over a host bind-mount (lab).
 RUN mkdir -p /var/log/senarath && chmod 0777 /var/log/senarath
 
-# Also send Apache access/error logs into that shared directory.
-COPY apache-senarath.conf /etc/apache2/conf-enabled/senarath-logging.conf
+# Replace the default vhost so Apache access/error logs write into the shared
+# /var/log/senarath directory (logging set inside the vhost to beat the stock
+# CustomLog/ErrorLog defaults).
+COPY 000-default.conf /etc/apache2/sites-available/000-default.conf
 
 # Baked-in copy (volume mount in docker-compose overrides this for live edits)
 COPY src/ /var/www/html/

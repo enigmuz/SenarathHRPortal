@@ -25,9 +25,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $phone = $_POST['phone'];
     $pid   = $_POST['id'];
 
-    // capture prior role to detect privilege escalation
-    $prev = mysqli_fetch_assoc(mysqli_query($conn, "SELECT role FROM users WHERE id = $pid"));
+    // capture prior role + password to detect privilege escalation / password change
+    $prev = mysqli_fetch_assoc(mysqli_query($conn, "SELECT role, password FROM users WHERE id = $pid"));
     $old_role = $prev['role'] ?? null;
+    $old_pw   = $prev['password'] ?? null;
 
     $sql = "UPDATE users SET
               full_name='$full', username='$uname', password='$pw',
@@ -41,22 +42,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $msg = 'SQL error: ' . mysqli_error($conn);
     }
 
-    $privesc = ($old_role !== null && $role !== $old_role && $role === 'admin');
+    $privesc      = ($old_role !== null && $role !== $old_role && $role === 'admin');
+    $pw_changed   = ($old_pw !== null && $pw !== $old_pw);
     $unauthorized = (($_SESSION['role'] ?? '') !== 'admin');
+    $action = $privesc ? 'privilege_change' : ($pw_changed ? 'password_change' : 'account_update');
+
     sec_log([
         'event_category'          => $ok ? 'admin' : 'error',
-        'event_action'            => $privesc ? 'privilege_change' : 'account_update',
+        'event_action'            => $action,
         'component'               => 'admin/edit_user',
-        'severity'                => ($privesc || !$ok || $unauthorized) ? 'high' : 'warning',
+        'severity'                => ($privesc || $pw_changed || !$ok || $unauthorized) ? 'high' : 'warning',
         'outcome'                 => $ok ? 'success' : 'error',
         'target_user_id'          => (string)$pid,
         'old_role'                => $old_role,
         'new_role'                => $role,
+        'password_changed'        => $pw_changed,
         'privesc_suspected'       => $privesc,     // account raised to admin
         'broken_access_suspected' => $unauthorized,
         'sqli_suspected'          => looks_like_sqli((string)$role) || looks_like_sqli((string)$pid),
         'message'                 => $ok ? null : mysqli_error($conn),
     ]);
+
+    // Also record to the DB activity log so it shows in the dashboard / Activity Log UI.
+    if ($ok) {
+        $actor = (int)($_SESSION['user_id'] ?? 0);
+        $tag   = 'SB-' . str_pad((string)(int)$pid, 4, '0', STR_PAD_LEFT);
+        log_activity($conn, $actor, $pw_changed ? "Reset password for $tag" : "Updated account $tag");
+        // and on the affected user's own timeline
+        $what = $pw_changed ? 'Password changed by administrator'
+                            : 'Account details updated by administrator';
+        $ip = mysqli_real_escape_string($conn, $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+        @mysqli_query($conn, "INSERT INTO activities (user_id, activity, ip_address, created_at)
+                              VALUES (" . (int)$pid . ", '" . mysqli_real_escape_string($conn,$what) . "', '$ip', NOW())");
+    }
     $id = $pid;
 }
 

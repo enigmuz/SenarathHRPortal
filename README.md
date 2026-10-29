@@ -27,6 +27,7 @@ employees**. Every person, NIC, salary and bank account in it is fake.
 ```
 HR Management Portal/
 ├── docker-compose.yml
+├── .env                        # LOG_DIR: host directory for logs (edit then rebuild)
 ├── README.md
 ├── collector/                  # CrowdStrike collector configs (see Section 8)
 │   ├── falcon-logscale-collector.yaml
@@ -34,7 +35,7 @@ HR Management Portal/
 │   └── parsers.conf
 ├── web/
 │   ├── Dockerfile
-│   ├── apache-senarath.conf    # mirrors apache logs into /var/log/senarath
+│   ├── 000-default.conf        # apache vhost: logs to /var/log/senarath
 │   └── src/            # all PHP (live-mounted into the web container)
 │       ├── index.php          # login (SQLi-vulnerable auth)
 │       ├── logger.php         # structured NDJSON security logging
@@ -106,7 +107,8 @@ cd senarath-portal
 From the project folder on the Ubuntu laptop:
 
 ```bash
-# create the host log dir under /var/log so the container (www-data) can write to it
+# the log location is set by LOG_DIR in .env (default /var/log/senarath).
+# create that dir and make it writable before building:
 sudo mkdir -p /var/log/senarath && sudo chmod 777 /var/log/senarath
 
 docker compose up -d --build
@@ -251,8 +253,10 @@ vulnerable.**
 
 ### 8.1 What gets written, and where
 
-All logs land in `/var/log/senarath/` on the Ubuntu host (under the standard
-system log directory, the same convention as `/var/log/apache2`):
+All logs land in the host directory set by **`LOG_DIR`** in `.env`
+(default `/var/log/senarath/`, under the standard system log directory, the
+same convention as `/var/log/apache2`). To move them, edit `LOG_DIR`, create
+and `chmod 777` the new path, then `docker compose up -d --build`:
 
 | File | Format | Contents |
 |------|--------|----------|
@@ -297,8 +301,8 @@ Detection flags (boolean — these are your high-signal hunting pivots):
 
 `event_action` values: `login_success`, `login_failure`, `sql_error`,
 `staff_search`, `view_profile`, `view_payroll`, `view_activity`,
-`admin_access`, `staff_dump`, `account_update`, `privilege_change`,
-`account_delete`.
+`admin_access`, `staff_dump`, `account_update`, `password_change`,
+`privilege_change`, `account_delete`.
 
 Example line (SQLi auth bypass):
 ```json
